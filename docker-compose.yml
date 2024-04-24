@@ -1,0 +1,9 @@
+version: '3.3'
+services:
+  realtrace_event_processor_uat:
+    image: realvariable/realtrace_event_processor_uat:${BRANCH_NAME}-${COMMIT_HASH}
+    container_name: realtrace_event_processor_uat
+    ports:
+      - 6001:6001
+    restart: always
+    network_mode: "host"

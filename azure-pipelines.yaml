@@ -1,0 +1,76 @@
+trigger:
+  - none
+
+name: realtrace-event-processor_$(Date:yyyyMMdd)$(Rev:rr)_$(Build.SourceBranchName)_$(Build.BuildId)
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+- stage: Build
+  jobs:
+    - job: Build_Image
+      displayName: Build Image
+      steps:
+          - script: echo "##vso[task.setvariable variable=COMMIT_HASH]$(Build.SourceVersion)"
+            displayName: 'Set COMMIT_HASH variable'
+          - task: Docker@2
+            displayName: Build image
+            inputs:
+              containerRegistry: 'Dockerconnection'
+              repository: '$(repository)'
+              command: 'build'
+              Dockerfile: 'Dockerfile'
+              tags: '$(Build.SourceBranchName)-$(COMMIT_HASH)'
+          - task: Docker@2
+            displayName: Push image
+            inputs:
+              containerRegistry: 'Dockerconnection'
+              repository: '$(repository)'
+              command: 'push'
+              tags: '$(Build.SourceBranchName)-$(COMMIT_HASH)'
+          - task: CopyFiles@2
+            inputs:
+              Contents: 'docker-compose.yml'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+- stage: Deploy
+  jobs:
+    - job: Deploy
+      steps:
+        - script: echo "##vso[task.setvariable variable=COMMIT_HASH]$(Build.SourceVersion)"
+          displayName: 'Set COMMIT_HASH variable'
+        - task: CopyFiles@2
+          displayName: 'Copy docker-compose.yml'
+          inputs:
+            SourceFolder: '$(Pipeline.Workspace)'
+            Contents: '**/docker-compose.yml'
+            TargetFolder: '$(Build.ArtifactStagingDirectory)/drop'
+
+        - task: CopyFilesOverSSH@0
+          displayName: 'Securely copy files to the remote machine'
+          inputs:
+            sshEndpoint: 'realtrace_node_dev'
+            sourceFolder: '$(Build.ArtifactStagingDirectory)/drop/s/'
+            targetFolder: '/u01/a01/event_processor_uat/'
+            cleanTargetFolder: true
+        
+
+        - task: SSH@0
+          displayName: 'Run shell inline on remote machine'
+          inputs:
+            sshEndpoint: 'realtrace_node_dev'
+            runOptions: inline
+            inline: |
+              echo COMMIT_HASH="$(Build.SourceVersion)" > /u01/a01/event_processor_uat/.env
+              echo BRANCH_NAME="$(Build.SourceBranchName)" >> /u01/a01/event_processor_uat/.env
+     
+              docker-compose -f /u01/a01/event_processor_uat/docker-compose.yml --env-file /u01/a01/event_processor_uat/.env pull --quiet-pull
+     
+              docker-compose -f /u01/a01/event_processor_uat/docker-compose.yml --env-file /u01/a01/event_processor_uat/.env up -d
+            failOnStdErr: false
